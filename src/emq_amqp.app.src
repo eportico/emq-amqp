@@ -1,0 +1,16 @@
+{application, emq_amqp,
+ [{description, "Emqttd AMQP bridge plugin"},
+  {vsn, "1.0.0"},
+  {modules, []},
+  {registered, []},
+  {mod, { emq_amqp_app, []}},
+  {applications,
+   [kernel,
+    stdlib
+   ]},
+  {env,[]},
+
+  {maintainers, []},
+  {licenses, ["Apache 2.0"]},
+  {links, []}
+ ]}.
