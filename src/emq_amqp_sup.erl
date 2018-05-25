@@ -19,14 +19,16 @@
 %% API functions
 %%====================================================================
 
-start_link() -> supervisor:start_link({local, ?SERVER}, ?MODULE, []).
+start_link() ->
+  supervisor:start_link({local, ?SERVER}, ?MODULE, []).
 
 %%====================================================================
 %% Supervisor callbacks
 %%====================================================================
 
 %% Child :: {Id,StartFunc,Restart,Shutdown,Type,Modules}
-init([]) -> {ok, {{one_for_all, 0, 1}, []}}.
+init([]) ->
+  {ok, {{one_for_one, 1, 5}, []}}.
 
 %%====================================================================
 %% Internal functions
