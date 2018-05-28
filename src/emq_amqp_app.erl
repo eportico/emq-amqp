@@ -8,7 +8,6 @@
 -behaviour(application).
 
 -export([start/2, stop/1]).
--export([extract/2, declare_exchanges/1]). %%TODO: Remove
 
 -include("emq_amqp.hrl").
 -include("emq_amqp_cli.hrl").
@@ -27,7 +26,7 @@ start(_StartType, _StartArgs) ->
   start_server(Sup, {"amqp client", emq_amqp_client}),
   start_server(Sup, {"emqtt-amqp router", emq_amqp_plugin, {Routes}}),
 
-  declare_exchanges(emq_amqp_app:extract(exchange, Routes)),
+  declare_exchanges(extract(exchange, Routes)),
 
   emq_amqp_plugin:load(),
   print_vsn(),
