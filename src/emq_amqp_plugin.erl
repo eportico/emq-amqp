@@ -8,7 +8,7 @@
 -include("emq_amqp_cli.hrl").
 
 %% API
--export([start_link/0, load/0,unload/0]).
+-export([start_link/1, load/0,unload/0]).
 
 %% GenServer API
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, code_change/3]).
@@ -17,6 +17,8 @@
 -export([on_client_connected/3,on_client_disconnected/3]).
 -export([on_client_subscribe/4,on_client_unsubscribe/4]).
 -export([on_message_publish/2,on_message_delivered/4,on_message_acked/4]).
+
+-export([load_client_routes/1, load_message_routes/1]).
 
 %% For eunit tests
 -export([start/0, stop/0]).
@@ -35,13 +37,13 @@
 %% API
 %%====================================================================
 
--spec(start_link() ->
+-spec(start_link(Routes::term()) ->
   {ok, Pid :: pid()} |
   ignore |
   {error, Reason :: term()}
 ).
-start_link() ->
-  gen_server:start_link({local, ?ROUTER}, ?MODULE, [], []).
+start_link(Routes) ->
+  gen_server:start_link({local, ?ROUTER}, ?MODULE, Routes, []).
 
 -spec load() -> no_return().
 load() ->
@@ -62,9 +64,7 @@ unload() ->
   {stop, Reason :: term()} |
   ignore
 ).
-init([]) ->
-  {ok, Routes} = application:get_env(?APP, events),
-  %% TODO: create exchanges/topics
+init(Routes) ->
   ClientRoutes  = proplists:get_value(client, Routes, []),
   MessageRoutes = proplists:get_value(message, Routes, []),
   {ok, #routes{
@@ -300,55 +300,48 @@ remove_hooks() ->
 timestamp_to_milliseconds({Mega, Sec, Micro}) ->
   (Mega * 1000000 + Sec) * 1000 + round(Micro / 1000).
 
+-spec(load_client_routes(RoutesSpecs :: list()) -> Routes :: emq_amqp_client_routes()).
+load_client_routes(RoutesSpecs) ->
+  lists:reverse(load_client_routes(RoutesSpecs, [])).
+load_client_routes([], Routes) ->
+  Routes;
+load_client_routes([{Id, [{exchange, Destination}]} | T], Routes) ->
+  case string:tokens(Destination, ":") of
+    [Type, Exchange] ->
+      load_client_routes(T, [#emq_amqp_client_route{
+        id = Id,
+        destination = #emq_amqp_exchange{
+          type  = to_binary(Type),
+          exchange  = to_binary(Exchange)
+        }
+      } | Routes]);
+    _ ->
+      ?ERROR("Invalid client route destination: ~p", [Destination]),
+      load_client_routes(T, Routes)
+  end.
+
+-spec(load_message_routes(RoutesSpecs :: list()) -> Routes :: emq_amqp_message_routes()).
+load_message_routes(RoutesSpecs) ->
+  lists:reverse(load_message_routes(RoutesSpecs, [])).
+load_message_routes([], Routes) ->
+  Routes;
+load_message_routes([{Id, [{topic, Topic}, {exchange, Destination}]} | T], Routes) ->
+  case string:tokens(Destination, ":") of
+    [Type, Exchange] ->
+      load_message_routes(T, [#emq_amqp_message_route{
+        id = Id,
+        filter = Topic,
+        destination = #emq_amqp_exchange{
+          type     = to_binary(Type),
+          exchange = to_binary(Exchange)
+        }
+      } | Routes]);
+    _ ->
+      ?ERROR("Invalid message route destination: ~p", [Destination]),
+      load_message_routes(T, Routes)
+  end.
+
+
 to_binary(T) when is_atom(T)   -> atom_to_binary(T, utf8);
 to_binary(T) when is_list(T)   -> list_to_binary(T);
 to_binary(T) when is_binary(T) -> T.
-
--spec(load_client_routes(RoutesSpecs :: list()) -> {ok, Routes :: emq_amqp_client_routes()}).
-load_client_routes(RoutesSpecs) ->
-  {ok, lists:reverse(lists:foldl(fun(Spec, Routes) ->
-    case Spec of
-      {Id, [{exchange, Destination}]} ->
-        case string:tokens(Destination, ":") of
-          [Type, Exchange] when ?IS_AMQP_EXCHANGE_TYPE(Type) ->
-            [#emq_amqp_message_route{
-              id = Id,
-              destination = #emq_amqp_exchange{
-                type  = Type,
-                exchange  = Exchange
-              }
-            } | Routes];
-          _ ->
-            ?ERROR("Invalid message route destination: ~p", [Destination]),
-            Routes
-        end;
-      _ ->
-        ?ERROR("Invalid message rule: ~p", [Spec]),
-        Routes
-    end
-  end, [], RoutesSpecs))}.
-
--spec(load_message_routes(RoutesSpecs :: list()) -> {ok, Routes :: emq_amqp_message_routes()}).
-load_message_routes(RoutesSpecs) ->
-  {ok, lists:reverse(lists:foldl(fun(Spec, Routes) ->
-    case Spec of
-      {Id, [{topic, Topic}, {exchange, Destination}]} ->
-        case string:tokens(Destination, ":") of
-          [Type, Exchange] when ?IS_AMQP_EXCHANGE_TYPE(Type) ->
-            [#emq_amqp_message_route{
-              id = Id,
-              filter = Topic,
-              destination = #emq_amqp_exchange{
-                type  = Type,
-                exchange  = Exchange
-              }
-            } | Routes];
-          _ ->
-            ?ERROR("Invalid message route destination: ~p", [Destination]),
-            Routes
-        end;
-      _ ->
-        ?ERROR("Invalid message rule: ~p", [Spec]),
-        Routes
-    end
-  end, [], RoutesSpecs))}.

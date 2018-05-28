@@ -3,7 +3,7 @@
 -behaviour(gen_server).
 
 %% API
--export([start_link/0, publish/3]).
+-export([start_link/0, publish/3, declare_exchange/2]).
 
 %% GenServer API
 -export([init/1, terminate/2, handle_call/3, handle_cast/2, handle_info/2, code_change/3]).
@@ -29,11 +29,18 @@
 start_link() ->
   gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
+-spec(declare_exchange(Exchange:: (binary() | list() | atom()), Type:: (binary() | list() | atom())) -> ok).
+declare_exchange(Exchange, Type) when is_binary(Exchange), is_binary(Type) ->
+  gen_server:cast(?MODULE, {declare_exchange, Exchange, Type});
+declare_exchange(Exchange, Type) when is_atom(Exchange) -> declare_exchange(atom_to_binary(Exchange, utf8), Type);
+declare_exchange(Exchange, Type) when is_list(Exchange) -> declare_exchange(list_to_binary(Exchange), Type);
+declare_exchange(Exchange, Type) when is_atom(Type) -> declare_exchange(Exchange, atom_to_binary(Type, utf8));
+declare_exchange(Exchange, Type) when is_list(Type) -> declare_exchange(Exchange, list_to_binary(Type)).
+
 -spec(publish(Exchange:: binary(), RoutingKey:: binary(), Msg:: iodata() | binary()) -> ok).
 publish(Exchange, RoutingKey, Msg) when is_binary(Msg) ->
   gen_server:cast(?MODULE, {publish, Exchange, RoutingKey, Msg});
-publish(Exchange, RoutingKey, Msg) ->
-  publish(Exchange, RoutingKey, jiffy:encode(Msg)).
+publish(Exchange, RoutingKey, Msg) -> publish(Exchange, RoutingKey, jiffy:encode(Msg)).
 
 
 %%====================================================================
@@ -76,19 +83,13 @@ terminate(_Reason, #state{connection = Connection, channel = Channel}) ->
   {stop, Reason :: term(), Reply :: term(), NewState :: #state{}} |
   {stop, Reason :: term(), NewState :: #state{}}).
 
-handle_call({declare_exchange, ExchangeName, Type}, _From, State) ->
+handle_call({declare_exchange, Exchange, Type}, _From, State) ->
+  ?DEBUG("declare_exchanges ~p:=~p~n", [Type, Exchange]),
   amqp_channel:call(State#state.channel, #'exchange.declare'{
-    exchange = ExchangeName,
+    exchange = Exchange,
     durable  = true,
     type     = Type
   }),
-  {noreply, State};
-
-handle_call({declare_queue, Exchange, Queue}, _From, State) ->
-  #state{connection = _, channel = Channel} = State,
-  #'queue.declare_ok'{queue = Q} = amqp_channel:call(Channel, #'queue.declare'{queue = Queue, auto_delete = false}),
-  amqp_channel:call(Channel, #'queue.bind'{queue = Q, exchange = Exchange, routing_key = <<"dn.key.resource.delete.*.5">>}), %TODO: Check the routing key
-  #'basic.consume_ok'{} = amqp_channel:subscribe(Channel, #'basic.consume'{no_ack = false, queue = Q}, self()),
   {noreply, State};
 
 handle_call(_Request, _From, State) ->

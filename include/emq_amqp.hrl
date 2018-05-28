@@ -1,13 +1,7 @@
 -define(APP, emq_amqp).
 
 
--type(amqp_exchange_type() :: direct | fanout | topic).
--define(IS_AMQP_EXCHANGE_TYPE(T), (
-    T =:= direct orelse
-    T =:= fanout orelse
-    T =:= topic
-)).
-
+-type(amqp_exchange_type() :: binary()).
 
 -record(emq_amqp_exchange, {
   type :: amqp_exchange_type(),
