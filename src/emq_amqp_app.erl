@@ -20,14 +20,10 @@ start(_StartType, _StartArgs) ->
   lager:start(),
   print_banner(),
   {ok, Sup} = emq_amqp_sup:start_link(),
-
   {ok, Routes} = application:get_env(?APP, events),
-
   start_server(Sup, {"amqp client", emq_amqp_client}),
   start_server(Sup, {"emqtt-amqp router", emq_amqp_plugin, {Routes}}),
-
   declare_exchanges(extract(exchange, Routes)),
-
   emq_amqp_plugin:load(),
   print_vsn(),
   {ok, Sup}.

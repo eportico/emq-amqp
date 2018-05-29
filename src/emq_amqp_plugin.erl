@@ -45,13 +45,15 @@
 start_link(Routes) ->
   gen_server:start_link({local, ?ROUTER}, ?MODULE, Routes, []).
 
--spec load() -> no_return().
+-spec(load() -> ok).
 load() ->
-  install_hooks().
+  install_hooks(),
+  ok.
 
--spec unload() -> no_return().
+-spec(unload() -> ok).
 unload() ->
-  remove_hooks().
+  remove_hooks(),
+  ok.
 
 
 %%====================================================================
@@ -107,16 +109,15 @@ handle_cast({on_client_connected, Client}, #routes{client_connect = Routes} = St
     peername     = {Ip, Port}
   } = Client,
   ?DEBUG("client ~p, ~p:~p connected", [ClientId, Ip, Port]),
-  PublishConnect = fun(#emq_amqp_client_route{destination = #emq_amqp_exchange{exchange = Exchange}}) ->
+  lists:foreach(fun(#emq_amqp_client_route{destination = #emq_amqp_exchange{exchange = Exchange}}) ->
     emq_amqp_client:publish(<<Exchange/binary>>, <<"client.", ClientId/binary, ".connected">>, #{
       <<"deviceId">> => ClientId,
       <<"protocol">> => <<"mqtt">>,
       <<"login">> => timestamp_to_milliseconds(Timestamp),
-      <<"ip">> => to_binary(inet_parse:ntoa(Ip)),
+      <<"ip">> => list_to_binary(inet:ntoa(Ip)),
       <<"port">> => Port
     })
-  end,
-  lists:foreach(PublishConnect, Routes),
+  end, Routes),
   {noreply, State};
 
 handle_cast({on_client_disconnected, _Reason, _Client}, #routes{client_disconnect = []} = State) ->
@@ -128,52 +129,47 @@ handle_cast({on_client_disconnected, Reason, Client}, #routes{client_disconnect 
     peername     = {Ip, Port}
   } = Client,
   ?DEBUG("client ~p, ~p:~p disconnected, reason ~p", [ClientId, Ip, Port, Reason]),
-  PublishDisconnect = fun(#emq_amqp_client_route{destination = #emq_amqp_exchange{exchange = Exchange}}) ->
+  lists:foreach(fun(#emq_amqp_client_route{destination = #emq_amqp_exchange{exchange = Exchange}}) ->
     emq_amqp_client:publish(<<Exchange/binary>>, <<"client.", ClientId/binary, ".disconnected">>, #{
       <<"deviceId">> => ClientId,
       <<"protocol">> => <<"mqtt">>,
       <<"login">> => timestamp_to_milliseconds(Timestamp),
-      <<"ip">> => to_binary(inet_parse:ntoa(Ip)),
+      <<"ip">> => list_to_binary(inet:ntoa(Ip)),
       <<"port">> => Port
     })
-  end,
-  lists:foreach(PublishDisconnect, Routes),
+  end, Routes),
   {noreply, State};
 
 handle_cast({on_client_subscribe, _ClientId, _Username, _TopicTable}, #routes{client_subscribe = []} = State) ->
   {noreply, State};
 handle_cast({on_client_subscribe, ClientId, Username, TopicTable}, #routes{client_subscribe = Routes} = State) ->
   ?DEBUG("client(~s/~s) subscribes: ~p~n", [Username, ClientId, TopicTable]),
-  PublishTopic= fun({Topic, _}) ->
-    PublishTopicOnRoute = fun(#emq_amqp_client_route{destination = #emq_amqp_exchange{exchange = Exchange}}) ->
+  lists:foreach(fun({Topic, _}) ->
+    lists:foreach(fun(#emq_amqp_client_route{destination = #emq_amqp_exchange{exchange = Exchange}}) ->
       emq_amqp_client:publish(<<Exchange/binary>>, <<"client.", ClientId/binary, ".subscribed">>, #{
         <<"deviceId">> => ClientId,
         <<"protocol">> => <<"mqtt">>,
         <<"topic">> => Topic,
         <<"timestamp">> => erlang:system_time(1000)
       })
-    end,
-    lists:foreach(PublishTopicOnRoute, Routes)
-  end,
-  lists:foreach(PublishTopic, TopicTable),
+    end, Routes)
+  end, TopicTable),
   {noreply, State};
 
 handle_cast({on_client_unsubscribe, _ClientId, _Username, _TopicTable}, #routes{client_unsubscribe = []} = State) ->
   {noreply, State};
 handle_cast({on_client_unsubscribe, ClientId, Username, TopicTable}, #routes{client_unsubscribe = Routes} = State) ->
   ?DEBUG("client(~s/~s) unsubscribe ~p~n", [ClientId, Username, TopicTable]),
-  PublishTopic= fun({Topic, _}) ->
-    PublishTopicOnRoute = fun(#emq_amqp_client_route{destination = #emq_amqp_exchange{exchange = Exchange}}) ->
+  lists:foreach(fun({Topic, _}) ->
+    lists:foreach(fun(#emq_amqp_client_route{destination = #emq_amqp_exchange{exchange = Exchange}}) ->
       emq_amqp_client:publish(<<Exchange/binary>>, <<"client.", ClientId/binary, ".unsubscribe">>, #{
         <<"deviceId">> => ClientId,
         <<"protocol">> => <<"mqtt">>,
         <<"topic">> => Topic,
         <<"timestamp">> => erlang:system_time(1000)
       })
-    end,
-    lists:foreach(PublishTopicOnRoute, Routes)
-  end,
-  lists:foreach(PublishTopic, TopicTable),
+    end, Routes)
+  end, TopicTable),
   {noreply, State};
 
 handle_cast({on_message_publish, _Message}, #routes{message_publish = []} = State) ->
@@ -246,14 +242,12 @@ on_client_unsubscribe(ClientId, Username, TopicTable, _Routes) ->
 -spec(on_message_publish(Message:: mqtt_message(), Env:: term()) -> {ok, mqtt_message()}).
 on_message_publish(Message = #mqtt_message{topic = <<"$SYS/", _/binary>>}, _) ->
   {ok, Message};
-on_message_publish(Message = #mqtt_message{from = <<"admin">>}, _) ->
-  {ok, Message};
 on_message_publish(Message = #mqtt_message{payload = <<>>}, _) ->
   {ok, Message};
-on_message_publish(Message = #mqtt_message{topic = <<"v1/", _Id:24/binary, _/binary>>}, _) ->
+on_message_publish(Message = #mqtt_message{}, _) ->
   gen_server:cast(?ROUTER, {on_message_publish, Message}),
   {ok, Message};
-on_message_publish(Message, _Routes) ->
+on_message_publish(Message, _) ->
   {ok, Message}.
 
 on_message_delivered(ClientId, Username, Message, _) ->
@@ -311,8 +305,8 @@ load_client_routes([{Id, [{exchange, Destination}]} | T], Routes) ->
       load_client_routes(T, [#emq_amqp_client_route{
         id = Id,
         destination = #emq_amqp_exchange{
-          type  = to_binary(Type),
-          exchange  = to_binary(Exchange)
+          type  = list_to_binary(Type),
+          exchange  = list_to_binary(Exchange)
         }
       } | Routes]);
     _ ->
@@ -332,16 +326,11 @@ load_message_routes([{Id, [{topic, Topic}, {exchange, Destination}]} | T], Route
         id = Id,
         filter = Topic,
         destination = #emq_amqp_exchange{
-          type     = to_binary(Type),
-          exchange = to_binary(Exchange)
+          type     = list_to_binary(Type),
+          exchange = list_to_binary(Exchange)
         }
       } | Routes]);
     _ ->
       ?ERROR("Invalid message route destination: ~p", [Destination]),
       load_message_routes(T, Routes)
   end.
-
-
-to_binary(T) when is_atom(T)   -> atom_to_binary(T, utf8);
-to_binary(T) when is_list(T)   -> list_to_binary(T);
-to_binary(T) when is_binary(T) -> T.

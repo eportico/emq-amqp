@@ -37,10 +37,12 @@ declare_exchange(Exchange, Type) when is_list(Exchange) -> declare_exchange(list
 declare_exchange(Exchange, Type) when is_atom(Type) -> declare_exchange(Exchange, atom_to_binary(Type, utf8));
 declare_exchange(Exchange, Type) when is_list(Type) -> declare_exchange(Exchange, list_to_binary(Type)).
 
--spec(publish(Exchange:: binary(), RoutingKey:: binary(), Msg:: iodata() | binary()) -> ok).
+-spec(publish(Exchange:: binary() | bitstring(), RoutingKey:: binary(), Msg:: term() | iodata() | binary()) -> ok).
 publish(Exchange, RoutingKey, Msg) when is_binary(Msg) ->
-  gen_server:cast(?MODULE, {publish, Exchange, RoutingKey, Msg});
-publish(Exchange, RoutingKey, Msg) -> publish(Exchange, RoutingKey, jiffy:encode(Msg)).
+  gen_server:cast(?MODULE, {publish, Exchange, RoutingKey, Msg}),
+  ok;
+publish(Exchange, RoutingKey, Msg) ->
+  publish(Exchange, RoutingKey, jiffy:encode(Msg)).
 
 
 %%====================================================================
