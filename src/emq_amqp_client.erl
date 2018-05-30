@@ -8,6 +8,11 @@
 %% GenServer API
 -export([init/1, terminate/2, handle_call/3, handle_cast/2, handle_info/2, code_change/3]).
 
+-ifdef(TEST).
+-compile(export_all).
+-endif.
+
+
 -define(SERVER, ?MODULE).
 
 -include_lib("amqp_client/include/amqp_client.hrl").

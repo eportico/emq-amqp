@@ -9,6 +9,10 @@
 
 -export([start/2, stop/1]).
 
+-ifdef(TEST).
+-compile(export_all).
+-endif.
+
 -include("emq_amqp.hrl").
 -include("emq_amqp_cli.hrl").
 
@@ -43,19 +47,25 @@ print_vsn() ->
 
 %%--------------------------------------------------------------------
 
+-spec declare_exchanges([string()]) -> ok.
 declare_exchanges([]) -> ok;
 declare_exchanges([H|T]) when is_list(H) ->
-  declare_exchanges(lists:map(fun(V) -> list_to_binary(V) end, string:tokens(H, ":")), T);
+  declare_exchanges(convert_exchange(H), T);
 declare_exchanges([H|T]) ->
   ?ERROR("unrecognized exchange declaration: ~p~n", [H]),
   declare_exchanges(T).
 
+-spec declare_exchanges([binary()], [string()]) -> ok.
 declare_exchanges([Type, Exchange], T) when is_binary(Type), is_binary(Exchange) ->
   emq_amqp_client:declare_exchange(Exchange, Type),
   declare_exchanges(T);
 declare_exchanges(H, T) ->
   ?ERROR("unrecognized exchange declaration: ~p~n", [H]),
   declare_exchanges(T).
+
+-spec convert_exchange(string()) -> [binary()].
+convert_exchange(H) ->
+  lists:map(fun(V) -> list_to_binary(V) end, string:tokens(H, ":")).
 
 %%--------------------------------------------------------------------
 %% Start Servers
@@ -83,13 +93,13 @@ worker_spec(Module) when is_atom(Module) ->
 worker_spec(M, F, A) ->
   {M, {M, F, A}, permanent, 10000, worker, [M]}.
 
-
 %%--------------------------------------------------------------------
 %% Extract values from configuration hierarchies
 %%--------------------------------------------------------------------
 
+-spec extract(term(), list()) -> list().
 extract(Key, Data) ->
-  remove_duplicates(extract(Key, Data, [])).
+  lists:reverse(remove_duplicates(extract(Key, Data, []))).
 extract(_Key, [], Acc) ->
   Acc;
 extract(Key, {Key,V}, Acc) ->
@@ -105,5 +115,6 @@ extract(Key, Data, Acc) when is_list(Data) ->
 extract(Key, Data, Acc) when is_tuple(Data) ->
   extract(Key, tuple_to_list(Data), Acc).
 
+-spec remove_duplicates(list()) -> list().
 remove_duplicates([])    -> [];
 remove_duplicates([H|T]) -> [H | [X || X <- remove_duplicates(T), X /= H]].
