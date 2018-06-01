@@ -18,18 +18,11 @@
 -export([on_client_subscribe/4,on_client_unsubscribe/4]).
 -export([on_message_publish/2,on_message_delivered/4,on_message_acked/4]).
 
--export([load_client_routes/1, load_message_routes/1]).
+-ifdef(TEST).
+-compile(export_all).
+-endif.
 
-%% For eunit tests
--export([start/0, stop/0]).
-
--record(routes, {
-  client_connect :: list(emq_amqp_client_route),
-  client_disconnect :: list(emq_amqp_client_route),
-  client_subscribe :: list(emq_amqp_client_route),
-  client_unsubscribe :: list(emq_amqp_client_route),
-  message_publish :: list(emq_amqp_message_route)
-}).
+-type routes() :: map().
 
 -define(ROUTER, ?MODULE).
 
@@ -61,31 +54,31 @@ unload() ->
 %%====================================================================
 
 -spec(init(Args :: term()) ->
-  {ok, State :: #routes{}} |
-  {ok, State :: #routes{}, timeout() | hibernate} |
+  {ok, State :: routes()} |
+  {ok, State :: routes(), timeout() | hibernate} |
   {stop, Reason :: term()} |
   ignore
 ).
 init(Routes) ->
   ClientRoutes  = proplists:get_value(client, Routes, []),
   MessageRoutes = proplists:get_value(message, Routes, []),
-  {ok, #routes{
-    client_connect      = load_client_routes(proplists:get_value(connect, ClientRoutes, [])),
-    client_disconnect   = load_client_routes(proplists:get_value(disconnect, ClientRoutes, [])),
-    client_subscribe    = load_client_routes(proplists:get_value(subscribe, ClientRoutes, [])),
-    client_unsubscribe  = load_client_routes(proplists:get_value(unsubscribe, ClientRoutes, [])),
-    message_publish     = load_message_routes(proplists:get_value(publish, MessageRoutes, []))
+  {ok, #{
+    client_connect      => load_client_routes(proplists:get_value(connect, ClientRoutes, [])),
+    client_disconnect   => load_client_routes(proplists:get_value(disconnect, ClientRoutes, [])),
+    client_subscribe    => load_client_routes(proplists:get_value(subscribe, ClientRoutes, [])),
+    client_unsubscribe  => load_client_routes(proplists:get_value(unsubscribe, ClientRoutes, [])),
+    message_publish     => load_message_routes(proplists:get_value(publish, MessageRoutes, []))
   }}.
 
 %%--------------------------------------------------------------------
 
--spec(handle_call(Request :: term(), From :: {pid(), Tag :: term()}, State :: #routes{}) ->
-  {reply, Reply :: term(), NewState :: #routes{}} |
-  {reply, Reply :: term(), NewState :: #routes{}, timeout() | hibernate} |
-  {noreply, NewState :: #routes{}} |
-  {noreply, NewState :: #routes{}, timeout() | hibernate} |
-  {stop, Reason :: term(), Reply :: term(), NewState :: #routes{}} |
-  {stop, Reason :: term(), NewState :: #routes{}}).
+-spec(handle_call(Request :: term(), From :: {pid(), Tag :: term()}, State :: routes()) ->
+  {reply, Reply :: term(), NewState :: routes()} |
+  {reply, Reply :: term(), NewState :: routes(), timeout() | hibernate} |
+  {noreply, NewState :: routes()} |
+  {noreply, NewState :: routes(), timeout() | hibernate} |
+  {stop, Reason :: term(), Reply :: term(), NewState :: routes()} |
+  {stop, Reason :: term(), NewState :: routes()}).
 
 handle_call(stop, _From, State) ->
   {stop, normal, ok, State};
@@ -95,54 +88,81 @@ handle_call(_Request, _From, State) ->
 
 %%--------------------------------------------------------------------
 
--spec(handle_cast(Request :: term(), State :: #routes{}) ->
-  {noreply, NewState :: #routes{}} |
-  {noreply, NewState :: #routes{}, timeout() | hibernate} |
-  {stop, Reason :: term(), NewState :: #routes{}}).
+-spec(handle_cast(Request :: term(), State :: routes()) ->
+  {noreply, NewState :: routes()} |
+  {noreply, NewState :: routes(), timeout() | hibernate} |
+  {stop, Reason :: term(), NewState :: routes()}).
 
-handle_cast({on_client_connected, _Client}, #routes{client_connect = []} = State) ->
+handle_cast({on_client_connected, _Client}, #{client_connect := []} = State) ->
   {noreply, State};
-handle_cast({on_client_connected, Client}, #routes{client_connect = Routes} = State) ->
+handle_cast({on_client_connected, Client}, #{client_connect := Routes} = State) ->
   #mqtt_client{
     client_id    = ClientId,
+    username     = Username,
     connected_at = Timestamp,
     peername     = {Ip, Port}
   } = Client,
   ?DEBUG("client ~p, ~p:~p connected", [ClientId, Ip, Port]),
   lists:foreach(fun(#emq_amqp_client_route{destination = #emq_amqp_exchange{exchange = Exchange}}) ->
-    emq_amqp_client:publish(<<Exchange/binary>>, <<"client.", ClientId/binary, ".connected">>, #{
-      <<"deviceId">> => ClientId,
-      <<"protocol">> => <<"mqtt">>,
-      <<"login">> => timestamp_to_milliseconds(Timestamp),
-      <<"ip">> => list_to_binary(inet:ntoa(Ip)),
-      <<"port">> => Port
-    })
+    emq_amqp_client:publish(
+      Exchange,
+      <<"client.", ClientId/binary, ".connected">>,
+      #{
+        <<"deviceId">> => ClientId,
+        <<"userId">>   => Username,
+        <<"protocol">> => <<"mqtt">>,
+        <<"login">>    => timestamp_to_milliseconds(Timestamp),
+        <<"ip">>       => list_to_binary(inet:ntoa(Ip)),
+        <<"port">>     => Port
+      }
+    )
   end, Routes),
   {noreply, State};
-
-handle_cast({on_client_disconnected, _Reason, _Client}, #routes{client_disconnect = []} = State) ->
+handle_cast({on_client_connected, _Client}, State) ->
+  ?DEBUG("Routes not configured for on_client_connected"),
   {noreply, State};
-handle_cast({on_client_disconnected, Reason, Client}, #routes{client_disconnect = Routes} = State) ->
+
+handle_cast({on_client_disconnected, _Reason, _Client}, #{client_disconnect := []} = State) ->
+  {noreply, State};
+handle_cast({on_client_disconnected, auth_failure, _Client}, State) ->
+  {noreply, State};
+handle_cast({on_client_disconnected, {shutdown, Reason}, Client}, State) ->
+  gen_server:cast(?ROUTER, {on_client_disconnected, Reason, Client}),
+  {noreply, State};
+handle_cast({on_client_disconnected, Reason, Client}, #{client_disconnect := Routes} = State) when is_atom(Reason) ->
   #mqtt_client{
     client_id    = ClientId,
+    username     = Username,
     connected_at = Timestamp,
     peername     = {Ip, Port}
   } = Client,
-  ?DEBUG("client ~p, ~p:~p disconnected, reason ~p", [ClientId, Ip, Port, Reason]),
+  ?DEBUG("client ~p:~p, ~p:~p disconnected, reason ~p", [ClientId, Username, Ip, Port, Reason]),
   lists:foreach(fun(#emq_amqp_client_route{destination = #emq_amqp_exchange{exchange = Exchange}}) ->
-    emq_amqp_client:publish(<<Exchange/binary>>, <<"client.", ClientId/binary, ".disconnected">>, #{
-      <<"deviceId">> => ClientId,
-      <<"protocol">> => <<"mqtt">>,
-      <<"login">> => timestamp_to_milliseconds(Timestamp),
-      <<"ip">> => list_to_binary(inet:ntoa(Ip)),
-      <<"port">> => Port
-    })
+    emq_amqp_client:publish(
+      <<Exchange/binary>>,
+      <<"client.", ClientId/binary, ".disconnected">>,
+      #{
+        <<"deviceId">> => ClientId,
+        <<"userId">>   => Username,
+        <<"protocol">> => <<"mqtt">>,
+        <<"login">>    => timestamp_to_milliseconds(Timestamp),
+        <<"ip">>       => list_to_binary(inet:ntoa(Ip)),
+        <<"port">>     => Port,
+        <<"reason">>   => atom_to_binary(Reason, utf8)
+      }
+    )
   end, Routes),
   {noreply, State};
-
-handle_cast({on_client_subscribe, _ClientId, _Username, _TopicTable}, #routes{client_subscribe = []} = State) ->
+handle_cast({on_client_disconnected, Reason, _Client}, #{client_disconnect := _Routes} = State) ->
+  ?ERROR("Client disconnected, cannot encode reason: ~p", [Reason]),
   {noreply, State};
-handle_cast({on_client_subscribe, ClientId, Username, TopicTable}, #routes{client_subscribe = Routes} = State) ->
+handle_cast({on_client_disconnected, _Reason, _Client}, State) ->
+  ?DEBUG("Routes not configured for on_client_disconnected"),
+  {noreply, State};
+
+handle_cast({on_client_subscribe, _ClientId, _Username, _TopicTable}, #{client_subscribe := []} = State) ->
+  {noreply, State};
+handle_cast({on_client_subscribe, ClientId, Username, TopicTable}, #{client_subscribe := Routes} = State) ->
   ?DEBUG("client(~s/~s) subscribes: ~p~n", [Username, ClientId, TopicTable]),
   lists:foreach(fun({Topic, _}) ->
     lists:foreach(fun(#emq_amqp_client_route{destination = #emq_amqp_exchange{exchange = Exchange}}) ->
@@ -155,10 +175,13 @@ handle_cast({on_client_subscribe, ClientId, Username, TopicTable}, #routes{clien
     end, Routes)
   end, TopicTable),
   {noreply, State};
-
-handle_cast({on_client_unsubscribe, _ClientId, _Username, _TopicTable}, #routes{client_unsubscribe = []} = State) ->
+handle_cast({on_client_subscribe, _ClientId, _Username, _TopicTable}, State) ->
+  ?DEBUG("Routes not configured for on_client_subscribe"),
   {noreply, State};
-handle_cast({on_client_unsubscribe, ClientId, Username, TopicTable}, #routes{client_unsubscribe = Routes} = State) ->
+
+handle_cast({on_client_unsubscribe, _ClientId, _Username, _TopicTable}, #{client_unsubscribe := []} = State) ->
+  {noreply, State};
+handle_cast({on_client_unsubscribe, ClientId, Username, TopicTable}, #{client_unsubscribe := Routes} = State) ->
   ?DEBUG("client(~s/~s) unsubscribe ~p~n", [ClientId, Username, TopicTable]),
   lists:foreach(fun({Topic, _}) ->
     lists:foreach(fun(#emq_amqp_client_route{destination = #emq_amqp_exchange{exchange = Exchange}}) ->
@@ -171,23 +194,32 @@ handle_cast({on_client_unsubscribe, ClientId, Username, TopicTable}, #routes{cli
     end, Routes)
   end, TopicTable),
   {noreply, State};
-
-handle_cast({on_message_publish, _Message}, #routes{message_publish = []} = State) ->
+handle_cast({on_client_unsubscribe, _ClientId, _Username, _TopicTable}, State) ->
+  ?DEBUG("Routes not configured for on_client_unsubscribe"),
   {noreply, State};
-handle_cast({on_message_publish, Message}, #routes{message_publish = Routes} = State) ->
+
+handle_cast({on_message_publish, _Message}, #{message_publish := []} = State) ->
+  {noreply, State};
+handle_cast({on_message_publish, #mqtt_message{payload = <<>>}}, State) ->
+  {noreply, State};
+handle_cast({on_message_publish, Message}, #{message_publish := Routes} = State) ->
   #mqtt_message{
     from = {ClientId, _Username},
     payload = Payload,
     topic = Topic
   } = Message,
-  case (lists:filter(fun({filter = Filter}) -> emqttd_topic:match(Topic, Filter) end, Routes)) of
+  case (lists:filter(fun(#emq_amqp_message_route{filter = Filter}) -> emqttd_topic:match(Topic, Filter) end, Routes)) of
     [] -> {noreply, State};
     MatchedRoutes ->
       ?DEBUG("publish ~s~n", [emqttd_message:format(Message)]),
       Msg = #{
         <<"deviceId">> => ClientId,
-        <<"info">> => jiffy:decode(Payload),
-        <<"timestamp">> => erlang:system_time(1000)
+        <<"timestamp">> => erlang:system_time(1000),
+        <<"info">> => try jiffy:decode(Payload) of
+                        Res -> Res
+                      catch
+                        throw:{error, {_, invalid_json}} -> Payload
+                      end
       },
       RoutingKey = binary:replace(Topic, <<"/">>, <<".">>, [global]),
       lists:foreach(fun(#emq_amqp_message_route{destination = #emq_amqp_exchange{exchange = Exchange}}) ->
@@ -196,16 +228,19 @@ handle_cast({on_message_publish, Message}, #routes{message_publish = Routes} = S
 
       {noreply, State}
   end;
+handle_cast({on_message_publish, _Message}, State) ->
+  ?DEBUG("Routes not configured for on_message_publish"),
+  {noreply, State};
 
 handle_cast(_Request, State) ->
   {noreply, State}.
 
 %%--------------------------------------------------------------------
 
--spec(handle_info(Info :: timeout() | term(), State :: #routes{}) ->
-  {noreply, NewState :: #routes{}} |
-  {noreply, NewState :: #routes{}, timeout() | hibernate} |
-  {stop, Reason :: term(), NewState :: #routes{}}).
+-spec(handle_info(Info :: timeout() | term(), State :: routes()) ->
+  {noreply, NewState :: routes()} |
+  {noreply, NewState :: routes(), timeout() | hibernate} |
+  {stop, Reason :: term(), NewState :: routes()}).
 
 handle_info(_, State) ->
   {noreply, State}.
@@ -220,50 +255,51 @@ code_change(_OldVsn, State, _Extra) ->
 % EMQ Hooks
 %%====================================================================
 
--spec(on_client_connected(ConnAck:: non_neg_integer(), Client:: mqtt_client(), Env:: term()) -> {ok, mqtt_client()}).
+-spec on_client_connected(ConnAck:: non_neg_integer(), Client:: mqtt_client(), Env:: term()) ->
+  {ok, mqtt_client()}.
 on_client_connected(?CONNACK_ACCEPT, Client, _) ->
   gen_server:cast(?ROUTER, {on_client_connected, Client}),
   {ok, Client};
 on_client_connected(_ConnAck, Client, _) ->
   {ok, Client#mqtt_client{client_id = undefined}}.
 
+-spec on_client_disconnected(Reason:: term(), Client:: mqtt_client(), Env:: term()) ->
+  ok.
 on_client_disconnected(Reason, Client, _) ->
   gen_server:cast(?ROUTER, {on_client_disconnected, Reason, Client}),
   ok.
 
-on_client_subscribe(ClientId, Username, TopicTable, _) ->
+-spec on_client_subscribe(ClientId:: string(), Username:: string(), TopicTable:: [{binary(), term()}], Env:: term()) ->
+  ok.
+on_client_subscribe(ClientId, Username, TopicTable, _Env) ->
   gen_server:cast(?ROUTER, {on_client_subscribe, ClientId, Username, TopicTable}),
   ok.
 
-on_client_unsubscribe(ClientId, Username, TopicTable, _Routes) ->
+-spec on_client_unsubscribe(ClientId:: string(), Username:: string(), TopicTable:: [{binary(), term()}], Env:: term()) ->
+  ok.
+on_client_unsubscribe(ClientId, Username, TopicTable, _Env) ->
   gen_server:cast(?ROUTER, {on_client_subscribe, ClientId, Username, TopicTable}),
   {ok, TopicTable}.
 
--spec(on_message_publish(Message:: mqtt_message(), Env:: term()) -> {ok, mqtt_message()}).
-on_message_publish(Message = #mqtt_message{topic = <<"$SYS/", _/binary>>}, _) ->
-  {ok, Message};
-on_message_publish(Message = #mqtt_message{payload = <<>>}, _) ->
-  {ok, Message};
-on_message_publish(Message = #mqtt_message{}, _) ->
+-spec on_message_publish(Message:: mqtt_message(), Env:: term()) ->
+  {ok, mqtt_message()}.
+on_message_publish(Message = #mqtt_message{}, _Env) ->
   gen_server:cast(?ROUTER, {on_message_publish, Message}),
   {ok, Message};
 on_message_publish(Message, _) ->
   {ok, Message}.
 
-on_message_delivered(ClientId, Username, Message, _) ->
+-spec on_message_delivered(ClientId:: string(), Username:: string(), Message:: mqtt_message(), Env:: term()) ->
+  {ok, mqtt_message()}.
+on_message_delivered(ClientId, Username, Message, _Env) ->
   ?DEBUG("delivered to client(~s/~s): ~s~n", [Username, ClientId, emqttd_message:format(Message)]),
   {ok, Message}.
 
-on_message_acked(ClientId, Username, Message, _Routes) ->
+-spec on_message_acked(ClientId:: string(), Username:: string(), Message:: mqtt_message(), Env:: term()) ->
+  {ok, mqtt_message()}.
+on_message_acked(ClientId, Username, Message, _Env) ->
   ?DEBUG("client(~s/~s) acked: ~s~n", [Username, ClientId, emqttd_message:format(Message)]),
   {ok, Message}.
-
-
-start() ->
-  gen_server:start({local, ?ROUTER}, ?MODULE, [], []).
-
-stop() ->
-  gen_server:call(?ROUTER, stop).
 
 
 %%====================================================================
@@ -288,13 +324,14 @@ remove_hooks() ->
   emqttd:unhook('message.delivered',    fun ?MODULE:on_message_delivered/4),
   emqttd:unhook('message.acked',        fun ?MODULE:on_message_acked/4).
 
-%%timestamp_to_seconds({Mega, Sec, Micro}) ->
-%%  (Mega * 1000000 + Sec).
-
+-spec timestamp_to_milliseconds({integer(), integer(), integer()}) ->
+  integer().
 timestamp_to_milliseconds({Mega, Sec, Micro}) ->
   (Mega * 1000000 + Sec) * 1000 + round(Micro / 1000).
 
--spec(load_client_routes(RoutesSpecs :: list()) -> Routes :: emq_amqp_client_routes()).
+
+-spec load_client_routes(RoutesSpecs :: list()) ->
+  [emq_amqp_client_route()].
 load_client_routes(RoutesSpecs) ->
   lists:reverse(load_client_routes(RoutesSpecs, [])).
 load_client_routes([], Routes) ->
@@ -314,7 +351,8 @@ load_client_routes([{Id, [{exchange, Destination}]} | T], Routes) ->
       load_client_routes(T, Routes)
   end.
 
--spec(load_message_routes(RoutesSpecs :: list()) -> Routes :: emq_amqp_message_routes()).
+-spec(load_message_routes(RoutesSpecs :: list()) ->
+  [emq_amqp_message_route()]).
 load_message_routes(RoutesSpecs) ->
   lists:reverse(load_message_routes(RoutesSpecs, [])).
 load_message_routes([], Routes) ->
@@ -324,7 +362,7 @@ load_message_routes([{Id, [{topic, Topic}, {exchange, Destination}]} | T], Route
     [Type, Exchange] ->
       load_message_routes(T, [#emq_amqp_message_route{
         id = Id,
-        filter = Topic,
+        filter = list_to_binary(Topic),
         destination = #emq_amqp_exchange{
           type     = list_to_binary(Type),
           exchange = list_to_binary(Exchange)

@@ -36,7 +36,7 @@ start_link() ->
 
 -spec(declare_exchange(Exchange:: (binary() | list() | atom()), Type:: (binary() | list() | atom())) -> ok).
 declare_exchange(Exchange, Type) when is_binary(Exchange), is_binary(Type) ->
-  gen_server:cast(?MODULE, {declare_exchange, Exchange, Type});
+  gen_server:call(?MODULE, {declare_exchange, Exchange, Type});
 declare_exchange(Exchange, Type) when is_atom(Exchange) -> declare_exchange(atom_to_binary(Exchange, utf8), Type);
 declare_exchange(Exchange, Type) when is_list(Exchange) -> declare_exchange(list_to_binary(Exchange), Type);
 declare_exchange(Exchange, Type) when is_atom(Type) -> declare_exchange(Exchange, atom_to_binary(Type, utf8));
@@ -97,7 +97,7 @@ handle_call({declare_exchange, Exchange, Type}, _From, State) ->
     durable  = true,
     type     = Type
   }),
-  {noreply, State};
+  {ok, State};
 
 handle_call(_Request, _From, State) ->
   {noreply, State}.
