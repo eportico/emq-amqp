@@ -113,7 +113,7 @@ load_client_routes(_Config) ->
       id = 3,
       destination = #emq_amqp_exchange{
         type = <<"fanout">>,
-        exchange = <<"emq.topic">>
+        exchange = <<"emq.fanout">>
       }
     }
   ], Res).
