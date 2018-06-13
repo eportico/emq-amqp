@@ -25,7 +25,9 @@ Vagrant.configure("2") do |config|
   # NOTE: This will enable public access to the opened port
   # config.vm.network "forwarded_port", guest: 80, host: 8080
   config.vm.network "forwarded_port", guest: 1883, host: 1883 # MQTT
+  config.vm.network "forwarded_port", guest: 18083, host: 18083 # MQTT Dashboard
   config.vm.network "forwarded_port", guest: 5672, host: 5672 # AMQP
+  config.vm.network "forwarded_port", guest: 15672, host: 15672 # AMQP Dashboard
 
   # Create a forwarded port mapping which allows access to a specific port
   # within the machine from a port on the host machine and only allow access
@@ -46,6 +48,9 @@ Vagrant.configure("2") do |config|
   # the path on the guest to mount the folder. And the optional third
   # argument is a set of non-required options.
   # config.vm.synced_folder "../data", "/vagrant_data"
+  # config.vm.synced_folder '.', '/vagrant', disabled: true
+  config.vm.synced_folder '.', '/vagrant', type: "rsync", rsync__exclude: "priv", rsync__args: ["--verbose", "--archive", "--delete", "-z", "--copy-links", "-a", "-L"]
+  # config.vm.synced_folder './_build/dev/rel', '/rel', type: "rsync", rsync__exclude: "priv", rsync__args: ["--verbose", "--archive", "--delete", "-z", "--copy-links", "-a", "-L"]
 
   # Provider-specific configuration so you can fine-tune various
   # backing providers for Vagrant. These expose provider-specific options.
@@ -83,10 +88,16 @@ Vagrant.configure("2") do |config|
     systemctl enable rabbitmq-server
     systemctl status rabbitmq-server
 
-    curl -L -o emqttd-centos7.x86_64.rpm http://emqtt.com/downloads/latest/centos7-rpm
-    rpm -ivh emqttd-centos7.x86_64.rpm
-    systemctl start emqttd.service
-    systemctl enable emqttd.service
-    systemctl status emqttd.service
+    yum -y install unzip
+    curl -L -o emqttd-centos7-v2.2.0.zip http://emqtt.io/downloads/stable/centos7
+    unzip emqttd-centos7-v2.2.0.zip
+
+    curl -O https://s3.amazonaws.com/rebar3/rebar3 && chmod +x rebar3
+
+    # curl -L -o emqttd-centos7.x86_64.rpm http://emqtt.com/downloads/latest/centos7-rpm
+    # rpm -ivh emqttd-centos7.x86_64.rpm
+    # systemctl start emqttd.service
+    # systemctl enable emqttd.service
+    # systemctl status emqttd.service
   SHELL
 end

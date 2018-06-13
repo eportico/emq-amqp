@@ -1,16 +1,17 @@
 {application, emq_amqp,
  [{description, "Emqttd AMQP bridge plugin"},
-  {vsn, "1.0.0"},
+  {vsn, "0.1.0"},
   {modules, []},
   {registered, []},
   {mod, { emq_amqp_app, []}},
-  {applications,
-   [kernel,
-    stdlib
-   ]},
+  {applications, [
+    kernel,
+    stdlib,
+    amqp_client
+  ]},
   {env,[]},
 
-  {maintainers, []},
+  {maintainers, ["Xavier Basty <xavier.basty@continental-corporation.com>"]},
   {licenses, ["Apache 2.0"]},
   {links, []}
  ]}.

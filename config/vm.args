@@ -1,0 +1,6 @@
+-sname emq_amqp
+
+-setcookie emq_amqp_cookie
+
++K true
++A30

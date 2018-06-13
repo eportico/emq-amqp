@@ -3,7 +3,7 @@
 -behaviour(gen_server).
 
 %% API
--export([start_link/0, publish/3, declare_exchange/2]).
+-export([start_link/0, open_connection/1, declare_exchange/2, publish/3]).
 
 %% GenServer API
 -export([init/1, terminate/2, handle_call/3, handle_cast/2, handle_info/2, code_change/3]).
@@ -34,7 +34,11 @@
 start_link() ->
   gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
--spec(declare_exchange(Exchange:: (binary() | list() | atom()), Type:: (binary() | list() | atom())) -> ok).
+open_connection(ConnectionConfig) ->
+  gen_server:call(?MODULE, {open_connection, ConnectionConfig}),
+  ok.
+
+-spec(declare_exchange(Exchange:: (binary() | string() | atom()), Type:: (binary() | string() | atom())) -> ok).
 declare_exchange(Exchange, Type) when is_binary(Exchange), is_binary(Type) ->
   gen_server:call(?MODULE, {declare_exchange, Exchange, Type});
 declare_exchange(Exchange, Type) when is_atom(Exchange) -> declare_exchange(atom_to_binary(Exchange, utf8), Type);
@@ -61,7 +65,10 @@ publish(Exchange, RoutingKey, Msg) ->
   ignore
 ).
 init([]) ->
-  {ok, Connection} = amqp_connection:start(application:get_env(?APP, amqp)),
+  application:ensure_started(amqp_client),
+  {ok, ConfigSpecs} = application:get_env(?APP, amqp),
+  AmqpConfig = ?proplist_to_record(amqp_params_network)(ConfigSpecs),
+  {ok, Connection} = amqp_connection:start(AmqpConfig),
   {ok, Channel} = amqp_connection:open_channel(Connection),
 
   %% Limit unacknowledged messages to 10
@@ -90,8 +97,21 @@ terminate(_Reason, #state{connection = Connection, channel = Channel}) ->
   {stop, Reason :: term(), Reply :: term(), NewState :: #state{}} |
   {stop, Reason :: term(), NewState :: #state{}}).
 
+handle_call({open_connection, ConnectionConfig}, _From, _State) ->
+  AmqpConfig = ?proplist_to_record(amqp_params_network)(ConnectionConfig),
+  {ok, Connection} = amqp_connection:start(AmqpConfig),
+  {ok, Channel} = amqp_connection:open_channel(Connection),
+
+  %% Limit unacknowledged messages to 10
+  amqp_channel:call(Channel, #'basic.qos'{prefetch_count = 10}),
+
+  {ok, #state{
+    connection = Connection,
+    channel    = Channel
+  }};
+
 handle_call({declare_exchange, Exchange, Type}, _From, State) ->
-  ?DEBUG("declare_exchanges ~p:=~p~n", [Type, Exchange]),
+  ?DEBUG("declare_exchanges ~p(~p)~n", [Exchange, Type]),
   amqp_channel:call(State#state.channel, #'exchange.declare'{
     exchange = Exchange,
     durable  = true,

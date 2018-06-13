@@ -276,7 +276,7 @@ on_client_subscribe(ClientId, Username, TopicTable, _Env) ->
   ok.
 
 -spec on_client_unsubscribe(ClientId:: string(), Username:: string(), TopicTable:: [{binary(), term()}], Env:: term()) ->
-  ok.
+  {ok, [{binary(), term()}]}.
 on_client_unsubscribe(ClientId, Username, TopicTable, _Env) ->
   gen_server:cast(?ROUTER, {on_client_subscribe, ClientId, Username, TopicTable}),
   {ok, TopicTable}.

@@ -7,7 +7,7 @@
 
 -behaviour(application).
 
--export([start/2, stop/1]).
+-export([start/0, start/2, stop/1]).
 
 -ifdef(TEST).
 -compile(export_all).
@@ -19,16 +19,26 @@
 %%--------------------------------------------------------------------
 %% Application Callbacks
 %%--------------------------------------------------------------------
-
+start() ->
+  start(undefined, undefined).
 start(_StartType, _StartArgs) ->
   lager:start(),
-  print_banner(),
+  case application:ensure_started(emqttd) of
+%%    {error, {not_started, gproc}} -> {error, "EMQTTD not started"};
+    {error, {not_started, gproc}} -> Dbg = startup();
+    {error, already_started} -> startup();
+%%    {error, Reason} -> {error, io_lib:format("EMQTTD error: ~p", [Reason])};
+    {error, Reason} -> Dbg = startup();
+    {ok, _Pid} -> startup()
+  end.
+
+startup() ->
   {ok, Sup} = emq_amqp_sup:start_link(),
-  {ok, Routes} = application:get_env(?APP, events),
+  {ok, Routes} = application:get_env(?APP, routes),
   start_server(Sup, {"amqp client", emq_amqp_client}),
   start_server(Sup, {"emqtt-amqp router", emq_amqp_plugin, {Routes}}),
   declare_exchanges(extract(exchange, Routes)),
-  emq_amqp_plugin:load(),
+%%  emq_amqp_plugin:load(),
   print_vsn(),
   {ok, Sup}.
 
@@ -38,12 +48,9 @@ stop(_State) ->
 
 %%--------------------------------------------------------------------
 
-print_banner() ->
-  ?INFO("starting ~s on node '~s'~n", [?APP, node()]).
-
 print_vsn() ->
   {ok, Vsn} = application:get_key(vsn),
-  ?INFO("~s ~s is running now~n", [?APP, Vsn]).
+  ?INFO("~s ~s is running now", [?APP, Vsn]).
 
 %%--------------------------------------------------------------------
 
@@ -74,12 +81,12 @@ convert_exchange(H) ->
 start_server(Sup, {Name, Server, Args}) ->
   ?INFO("~s is starting...", [Name]),
   start_child(Sup, Server, Args),
-  ?INFO("[ok]~n");
+  ?INFO("[ok]");
 
 start_server(Sup, {Name, Server}) ->
   ?INFO("~s is starting...", [Name]),
   start_child(Sup, Server),
-  ?INFO("[ok]~n").
+  ?INFO("[ok]").
 
 start_child(Sup, Module, Args) when is_atom(Module) ->
   {ok, _ChiId} = supervisor:start_child(Sup, worker_spec(Module, Args)).
@@ -87,7 +94,7 @@ start_child(Sup, Module) when is_atom(Module) ->
   {ok, _ChiId} = supervisor:start_child(Sup, worker_spec(Module)).
 
 worker_spec(Module, Args) when is_atom(Module) ->
-  worker_spec(Module, start_link, Args).
+  worker_spec(Module, {Module, start_link, Args}).
 worker_spec(Module) when is_atom(Module) ->
   worker_spec(Module, start_link, []).
 worker_spec(M, F, A) ->
