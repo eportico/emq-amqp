@@ -7,7 +7,7 @@
 
 -behaviour(application).
 
--export([start/0, start/2, stop/1]).
+-export([start/2, stop/1]).
 
 -ifdef(TEST).
 -compile(export_all).
@@ -19,26 +19,25 @@
 %%--------------------------------------------------------------------
 %% Application Callbacks
 %%--------------------------------------------------------------------
-start() ->
-  start(undefined, undefined).
 start(_StartType, _StartArgs) ->
   lager:start(),
   case application:ensure_started(emqttd) of
-%%    {error, {not_started, gproc}} -> {error, "EMQTTD not started"};
-    {error, {not_started, gproc}} -> Dbg = startup();
+    {error, {not_started, gproc}} -> {error, "EMQTTD not started"};
     {error, already_started} -> startup();
-%%    {error, Reason} -> {error, io_lib:format("EMQTTD error: ~p", [Reason])};
-    {error, Reason} -> Dbg = startup();
+    {error, Reason} -> {error, io_lib:format("EMQTTD error: ~p", [Reason])};
     {ok, _Pid} -> startup()
   end.
 
 startup() ->
-  {ok, Sup} = emq_amqp_sup:start_link(),
+  Sup = case emq_amqp_sup:start_link() of
+    {ok, Pid} -> Pid;
+    {error, {already_started, Pid}} -> Pid
+  end,
   {ok, Routes} = application:get_env(?APP, routes),
   start_server(Sup, {"amqp client", emq_amqp_client}),
   start_server(Sup, {"emqtt-amqp router", emq_amqp_plugin, {Routes}}),
   declare_exchanges(extract(exchange, Routes)),
-%%  emq_amqp_plugin:load(),
+  emq_amqp_plugin:load(),
   print_vsn(),
   {ok, Sup}.
 
